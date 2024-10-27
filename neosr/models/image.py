@@ -933,14 +933,16 @@ class image(base):
                     )
                 imwrite(sr_img, str(save_img_path))  # type: ignore[arg-type]
 
-                # add original lq and gt to results folder, once
-                save_lq_img_path = (
-                    Path(self.opt["path"]["visualization"])
-                    / img_name
-                    / f"{img_name}_lq.png"
-                )
-                original_lq = tensor2img([visuals["lq"]])
-                imwrite(original_lq, str(save_lq_img_path))
+                if self.opt.get("val", {}).get("copy_lq"):
+                    save_lq_img_path = (
+                        Path(self.opt["path"]["visualization"])
+                        / img_name
+                        / f"{img_name}_lq.png"
+                    )
+
+                    if not Path.exists(save_lq_img_path):
+                        original_lq = tensor2img([visuals["lq"]])
+                        imwrite(original_lq, str(save_lq_img_path))
 
             # check for dataset option save_tb, to save images on tb_logger
             if self.is_train:
