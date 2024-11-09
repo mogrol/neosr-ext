@@ -108,7 +108,7 @@ def build_dataloader(
         )
 
     # val
-    elif phase in {"val", "test"}:
+    elif phase in {"val", "test", "eval"}:
         dataloader_args = {
             "dataset": dataset,
             "batch_size": 1,

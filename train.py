@@ -60,8 +60,8 @@ def init_tb_loggers(opt: dict[str, Any]):
 def create_train_val_dataloader(
     opt: dict[str, Any], logger: logging.Logger
 ) -> tuple[data.DataLoader | None, Sampler, list[data.DataLoader], int, int]:
-    # create train and val dataloaders
-    train_loader, val_loaders = None, []
+    # create train, val and test dataloaders
+    train_loader, val_loaders, eval_loaders = None, [], []
 
     for phase, dataset_opt in opt["datasets"].items():
         if phase == "train":
@@ -114,12 +114,24 @@ def create_train_val_dataloader(
             )
             logger.info(f"Number of val images/folders: {len(val_set)}")  # type: ignore[reportArgumentType]
             val_loaders.append(val_loader)
+        elif phase.split("_")[0] == "eval":
+            eval_set = build_dataset(dataset_opt)
+            eval_loader = build_dataloader(
+                eval_set,  # type: ignore[reportArgumentType]
+                dataset_opt,
+                num_gpu=opt["num_gpu"],
+                dist=opt["dist"],
+                sampler=None,
+                seed=opt["manual_seed"],
+            )
+            logger.info(f"Number of eval images/folders: {len(eval_set)}")  # type: ignore[reportArgumentType]
+            eval_loaders.append(eval_loader)
         else:
             msg = f"{tc.red}Dataset phase {phase} is not recognized.{tc.end}"
             logger.error(msg)
             sys.exit(1)
 
-    return train_loader, train_sampler, val_loaders, total_epochs, total_iters  # type: ignore[reportPossiblyUnboundVariable]
+    return train_loader, train_sampler, val_loaders, eval_loaders, total_epochs, total_iters  # type: ignore[reportPossiblyUnboundVariable]
 
 
 def load_resume_state(opt: dict[str, Any]):
@@ -211,12 +223,25 @@ def train_pipeline(root_path: str) -> None:
         f"\n------------------------ neosr ------------------------\nPytorch Version: {torch.__version__}. Running on gpu {torch.cuda.get_device_name()}, with driver {driver_version}."
     )
 
+    # Check if patch size is a multiple of eight and adjust if not.
+    patch_size = opt["datasets"]["train"].get("patch_size") - (opt["datasets"]["train"].get("patch_size") % (8 * opt["scale"]))
+    if patch_size != opt["datasets"]["train"].get("patch_size"):
+        logger.warning(
+            f"Patch Size: {patch_size} ({tc.red}The patch_size must be a multiple of eight and was automatically adjusted from {opt["datasets"]["train"]["patch_size"]}. Please change your options file.{tc.end}"
+        )
+
+        opt["datasets"]["train"]["patch_size"] = patch_size
+    else:
+        logger.info(
+            f"Patch Size: {patch_size}."
+        )
+
     # initialize wandb and tb loggers
     tb_logger = init_tb_loggers(opt)
 
     # create train and validation dataloaders
     result = create_train_val_dataloader(opt, logger)
-    train_loader, train_sampler, val_loaders, total_epochs, total_iters = result
+    train_loader, train_sampler, val_loaders, eval_loaders, total_epochs, total_iters = result
 
     # create model
     model = build_model(opt)
@@ -253,7 +278,10 @@ def train_pipeline(root_path: str) -> None:
     accumulate = opt["datasets"]["train"].get("accumulate", 1)
     print_freq = opt["logger"].get("print_freq", 100)
     save_checkpoint_freq = opt["logger"]["save_checkpoint_freq"]
-    val_freq = opt["val"]["val_freq"] if opt.get("val") is not None else 100
+    val_start = opt["val"]["val_start"] if opt.get("val", {}).get("val_start") is not None else 0
+    val_freq = opt["val"]["val_freq"] if opt.get("val", {}).get("val_freq") is not None else 100
+    eval_start = opt["eval"]["eval_start"] if opt.get("eval", {}).get("eval_start") is not None else 0
+    eval_freq = opt["eval"]["eval_freq"] if opt.get("eval", {}).get("eval_freq") is not None else None
 
     # training
     logger.info(
@@ -326,13 +354,20 @@ def train_pipeline(root_path: str) -> None:
                     model.save(epoch, int(current_iter_log))  # type: ignore[reportFunctionMemberAccess,attr-defined]
 
                 # validation
-                if opt.get("val") is not None and (current_iter_log % val_freq == 0):
+                if val_freq and current_iter_log >= val_start and (current_iter_log % val_freq == 0):
                     for val_loader in val_loaders:
                         model.validation(  # type: ignore[reportFunctionMemberAccess,attr-defined]
                             val_loader,
                             int(current_iter_log),
                             tb_logger,
                             opt["val"].get("save_img", True),
+                        )
+
+                if eval_freq and current_iter >= eval_start and (current_iter_log % eval_freq == 0):
+                    for eval_loader in eval_loaders:
+                        model.evaluation(  # type: ignore[reportFunctionMemberAccess,attr-defined]
+                            eval_loader,
+                            int(current_iter_log)
                         )
 
                 # data_timer.start()
@@ -365,9 +400,9 @@ def train_pipeline(root_path: str) -> None:
                 tb_logger,
                 opt["val"].get("save_img", True),
             )
+
     if tb_logger:
         tb_logger.close()
-
 
 if __name__ == "__main__":
     root_path = Path.resolve(Path(__file__) / osp.pardir)

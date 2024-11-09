@@ -917,7 +917,7 @@ class image(base):
                     save_img_path = (
                         Path(self.opt["path"]["visualization"])
                         / img_name
-                        / f"{img_name}_{current_iter}.png"
+                        / f"{img_name}_{current_iter:06}.png"
                     )
                 elif val_suffix is not None:
                     save_img_path = (
@@ -979,15 +979,80 @@ class image(base):
 
         self.is_train = True
 
+    def dist_evaluation(
+        self, dataloader, current_iter: int
+    ) -> None:
+        if self.opt["rank"] == 0:
+            self.nondistevaluation(dataloader, current_iter)
+
+
+    def nondist_evaluation(
+        self, dataloader, current_iter: int
+    ) -> None:
+        # flag to not apply augmentation during val
+        self.is_train = False
+        dataset_name = dataloader.dataset.opt["name"]
+        # progress bar
+        use_pbar = self.opt["eval"].get("pbar", True)
+
+        if use_pbar:
+            pbar = tqdm(
+                total=len(dataloader), unit="image", colour="green", ascii=" >="
+            )
+
+        for _, eval_data in enumerate(dataloader):
+            img_name = Path(Path(eval_data["lq_path"][0]).name).stem
+            self.feed_data(eval_data)
+            self.test()
+
+            visuals = self.get_current_visuals()
+            sr_img = tensor2img([visuals["result"]])
+
+            # tentative for out of GPU memory
+            del self.lq
+            del self.output
+            torch.cuda.empty_cache()
+
+            # check if dataset has save_img option, and if so overwrite global save_img option
+            eval_suffix = self.opt["eval"].get("suffix", None)
+            if self.opt["is_train"]:
+                save_img_path = (
+                    Path(self.opt["path"]["evaluation"])
+                    #/ img_name
+                    / f"{img_name}_{current_iter:06}.png"
+                )
+            elif eval_suffix is not None:
+                save_img_path = (
+                    Path(self.opt["path"]["evaluation"])
+                    / dataset_name
+                    / f'{img_name}_{self.opt["eval"]["suffix"]}.png'
+                )
+            else:
+                save_img_path = (
+                    Path(self.opt["path"]["evaluation"])
+                    / dataset_name
+                    / f'{img_name}_{self.opt["name"]}.png'
+                )
+            imwrite(sr_img, str(save_img_path))  # type: ignore[arg-type]
+
+            if use_pbar:
+                pbar.update(1)  # type: ignore[reportPossiblyUnboundVariable]
+                pbar.set_description(f"{tc.light_green}Inferring on {img_name}{tc.end}")  # type: ignore[reportPossiblyUnboundVariable]
+
+        if use_pbar:
+            pbar.close()  # type: ignore[reportPossiblyUnboundVariable]
+
+        self.is_train = True
+
     def _log_validation_metric_values(
         self, current_iter: int, dataset_name: str, tb_logger
     ) -> None:
         log_str = f"Validation {dataset_name}\n\n"
         for metric, value in self.metric_results.items():
-            log_str += f"\t # {metric}: {value:.4f}"
+            log_str += f"\t # {metric}: {value:.6f}"
             if hasattr(self, "best_metric_results"):
                 log_str += (
-                    f'{tc.light_green}........ Best: {self.best_metric_results[dataset_name][metric]["val"]:.4f} @ '
+                    f'{tc.light_green}........ Best: {self.best_metric_results[dataset_name][metric]["val"]:.6f} @ '
                     f'{self.best_metric_results[dataset_name][metric]["iter"]} iter{tc.end}'
                 )
             log_str += "\n"
