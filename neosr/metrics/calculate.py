@@ -188,7 +188,7 @@ def calculate_dists(
     # to tensor
     img, img2 = cast(Tensor, img2tensor([img, img2]))
     # normalize to [0, 1]
-    img, img2 = img / 255, img2 / 255
+    #img, img2 = img / 255, img2 / 255
     # add dim
     if isinstance(img, Tensor) and isinstance(img2, Tensor):
         img, img2 = img.unsqueeze_(0), img2.unsqueeze_(0)

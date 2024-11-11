@@ -10,7 +10,7 @@ from neosr.data.degradations import (  # type: ignore[attr-defined]
     random_add_gaussian_noise_pt,
     random_add_poisson_noise_pt,
 )
-from neosr.data.transforms import paired_random_crop
+from neosr.data.transforms import paired_random_crop, paired_random_crop_vips
 from neosr.models.image import image
 from neosr.utils.diffjpeg import DiffJPEG, filter2D  # type: ignore[attr-defined]
 from neosr.utils.misc import tc
@@ -252,7 +252,7 @@ class otf(image):  # type: ignore[reportGeneralTypeIssues]
 
             # random crop
             patch_size = self.opt["datasets"]["train"].get("patch_size")
-            (self.gt), self.lq = paired_random_crop(  # type: ignore[reportAttributeAccessIssue,assignment]
+            (self.gt), self.lq = paired_random_crop_vips(  # type: ignore[reportAttributeAccessIssue,assignment]
                 [self.gt], self.lq, patch_size, self.opt["scale"]
             )
 

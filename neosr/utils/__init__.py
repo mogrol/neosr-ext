@@ -9,9 +9,12 @@ from neosr.utils.diffjpeg import DiffJPEG  # type: ignore[attr-defined]
 from neosr.utils.img_util import (
     crop_border,
     imfrombytes,
+    imfrompath,
     img2tensor,
     imwrite,
     tensor2img,
+    img2rgb,
+    vips2rgb
 )
 from neosr.utils.logger import (
     AvgTimer,
@@ -51,8 +54,11 @@ __all__ = [
     "get_root_logger",
     "get_time_str",
     "imfrombytes",
+    "imfrompath",
     # img_util.py
     "img2tensor",
+    "img2rgb",
+    "vips2rgb",
     "imwrite",
     "init_tb_logger",
     "init_wandb_logger",

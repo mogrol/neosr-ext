@@ -6,9 +6,10 @@ from torchvision.transforms.functional import normalize
 
 from neosr.data.data_util import paths_from_lmdb
 from neosr.data.file_client import FileClient
-from neosr.utils import imfrombytes, img2tensor, scandir
+from neosr.utils import imfrombytes, imfrompath, img2tensor, scandir
 from neosr.utils.registry import DATASET_REGISTRY
 
+import numpy as np
 
 @DATASET_REGISTRY.register()
 class single(data.Dataset):
@@ -67,15 +68,12 @@ class single(data.Dataset):
 
         # load lq image
         lq_path = self.paths[index]
-        img_bytes = self.file_client.get(lq_path, "lq")  # type: ignore[attr-defined]
 
-        try:
-            img_lq = imfrombytes(img_bytes, float32=True)
-        except AttributeError:
-            raise AttributeError(lq_path)
+        img_lq = imfrompath(lq_path).numpy(dtype=np.float32)
+        assert isinstance(img_lq, np.ndarray)
 
         # BGR to RGB, HWC to CHW, numpy to tensor
-        img_lq = img2tensor(img_lq, bgr2rgb=True, float32=True, color=self.color)
+        img_lq = img2tensor(img_lq, bgr2rgb=False, float32=False, color=self.color)
         # normalize
         if self.mean is not None or self.std is not None:
             normalize(img_lq, self.mean, self.std, inplace=True)  # type: ignore[reportAssignmentType]

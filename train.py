@@ -1,9 +1,15 @@
+from os import path as osp, environ, pathsep
+
+# TODO: Make dynamic - https://github.com/the-database/traiNNer-redux/blob/bbca86e611c5a7d2339aeec045eeb9849bcc589c/traiNNer/utils/vips_setup.py
+vips_bin = r"e:\neosr\.cache\vips-dev-8.16\bin"
+if str(vips_bin) not in environ["PATH"]:
+    environ["PATH"] = pathsep.join((vips_bin, environ["PATH"]))
+
 import datetime
 import logging
 import math
 import sys
 import time
-from os import path as osp
 from os import popen
 from pathlib import Path
 from typing import Any
@@ -36,7 +42,6 @@ from neosr.utils.options import copy_opt_file, parse_options
 if sys.version_info < (3, 12):  # noqa: UP036
     msg = f"{tc.red}Python version >=3.12 is required.{tc.end}"
     raise ValueError(msg)
-
 
 def init_tb_loggers(opt: dict[str, Any]):
     # initialize wandb logger before tensorboard logger to allow proper sync

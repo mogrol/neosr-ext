@@ -8,7 +8,49 @@ import torch
 from numpy.typing import ArrayLike, DTypeLike
 from torch import Tensor
 from torchvision.utils import make_grid
+import pyvips
 
+import pyvips
+
+def vips2rgb(im:pyvips.Image):
+    if im.bands == 1:
+        # If it's a single-channel (grayscale), convert to RGB by replicating the channel
+        im = im.colourspace("b-w").copy(bands=3)
+    elif im.bands == 4:
+        # If it has four channels (like RGBA), remove the alpha channel
+        im = im[:3]
+
+    return im
+
+def img2rgb(image: np.ndarray) -> np.ndarray:
+    """
+    Convert a NumPy array image to RGB.
+
+    Parameters:
+        image (np.ndarray): The input image array.
+                            Expected shape: (H, W), (H, W, 1), (H, W, 3), or (H, W, 4+).
+                            The array should have dtype=np.uint8 or similar.
+
+    Returns:
+        np.ndarray: RGB image with shape (H, W, 3).
+    """
+
+    # rgb
+    if image.ndim == 3 and image.shape[2] == 3:
+        return image
+
+    # grayscale
+    elif image.ndim == 2 or (image.ndim == 3 and image.shape[2] == 1):
+        return np.repeat(image[:, :, np.newaxis], 3, axis=2)
+
+    # rgba
+    elif image.ndim == 3 and image.shape[2] > 3:
+        return image[:, :, :3]
+
+    else:
+        raise ValueError(
+            "Unsupported image shape: expected (H, W), (H, W, 1), (H, W, 3), or (H, W, 4+)"
+        )
 
 def img2tensor(
     imgs: np.ndarray | ArrayLike | list[np.ndarray | ArrayLike],
@@ -50,7 +92,7 @@ def img2tensor(
         if float32:
             img = img.float()
 
-        return img
+        return img / 255.0
 
     if isinstance(imgs, list):
         return [_totensor(img, bgr2rgb, float32, color) for img in imgs]
@@ -149,6 +191,11 @@ def tensor2img_fast(
         output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
     return output
 
+
+def imfrompath(path: str) -> pyvips.Image:
+    im = pyvips.Image.new_from_file(path, access="sequential")
+    assert isinstance(im, pyvips.Image)
+    return vips2rgb(im)
 
 def imfrombytes(
     content: bytes, flag: str = "color", float32: bool = False

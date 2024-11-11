@@ -1,7 +1,7 @@
 import random
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from torch import Tensor
 from torch.utils import data
@@ -13,13 +13,12 @@ from neosr.data.data_util import (
     paired_paths_from_meta_info_file,
 )
 from neosr.data.file_client import FileClient
-from neosr.data.transforms import basic_augment, paired_random_crop
-from neosr.utils import get_root_logger, imfrombytes, img2tensor, tc
+from neosr.data.transforms import basic_augment, basic_augment_vips, paired_random_crop, paired_random_crop_vips
+from neosr.utils import get_root_logger, imfrombytes, imfrompath, img2tensor, tc, vips2rgb
 from neosr.utils.registry import DATASET_REGISTRY
 
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import ArrayLike
+import numpy as np
+from numpy.typing import ArrayLike
 
 
 @DATASET_REGISTRY.register()
@@ -101,22 +100,19 @@ class paired(data.Dataset):
         # Load gt and lq images. Dimension order: HWC; channel order: BGR;
         # image range: [0, 1], float32.
         gt_path = self.paths[index]["gt_path"]  # type: ignore[index]
-        img_bytes = self.file_client.get(gt_path, "gt")  # type: ignore[attr-defined]
-
         try:
-            img_gt: np.ndarray | ArrayLike = imfrombytes(img_bytes, float32=True)
-        except AttributeError:
-            raise AttributeError(gt_path)
+            img_gt = imfrompath(gt_path)
+        except AttributeError as error:
+            raise AttributeError(gt_path) from error
 
         lq_path = self.paths[index]["lq_path"]  # type: ignore[index]
-        img_bytes = self.file_client.get(lq_path, "lq")  # type: ignore[attr-defined]
-
         try:
-            img_lq: np.ndarray | ArrayLike = imfrombytes(img_bytes, float32=True)
-        except AttributeError:
-            raise AttributeError(lq_path)
+            img_lq = imfrompath(lq_path)
+        except AttributeError as error:
+            raise AttributeError(lq_path) from error
 
         # avoid errors caused by high latency in reading files
+        """
         retry = 3
         while retry > 0:
             try:
@@ -136,7 +132,7 @@ class paired(data.Dataset):
                 break
             finally:
                 retry -= 1
-
+        """
         scale = self.opt["scale"]
         # augmentation for training
         if self.opt["phase"] == "train":
@@ -144,20 +140,26 @@ class paired(data.Dataset):
             flip = self.opt.get("use_hflip", True)
             rot = self.opt.get("use_rot", True)
 
+            # flip, rotation
+            img_gt, img_lq = basic_augment_vips([img_gt, img_lq], hflip=flip, rotation=rot)  # type: ignore[misc,assignment]
+
             # random crop
-            img_gt, img_lq = paired_random_crop(
+            img_gt, img_lq = paired_random_crop_vips(
                 img_gt, img_lq, patch_size, scale, gt_path
             )
-            # flip, rotation
-            img_gt, img_lq = basic_augment([img_gt, img_lq], hflip=flip, rotation=rot)  # type: ignore[misc,assignment]
+        else:
+            img_gt = img_gt.numpy(dtype=np.float32)
+            img_lq = img_lq.numpy(dtype=np.float32)
+
+        assert isinstance(img_gt, np.ndarray)
+        assert isinstance(img_lq, np.ndarray)
 
         # crop the unmatched GT images during validation or testing
         if self.opt["phase"] != "train":
             img_gt = img_gt[0 : img_lq.shape[0] * scale, 0 : img_lq.shape[1] * scale, :]  # type: ignore[index,union-attr,call-overload]
 
-        # BGR to RGB, HWC to CHW, numpy to tensor
         img_gt, img_lq = img2tensor(
-            [img_gt, img_lq], bgr2rgb=True, float32=True, color=self.color
+            [img_gt, img_lq], bgr2rgb=False, float32=False, color=self.color
         )
 
         # normalize
