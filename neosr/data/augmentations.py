@@ -9,6 +9,75 @@ from neosr.utils.rng import rng
 
 rng = rng()
 
+@torch.no_grad()
+def grain(
+    img_gt: Tensor,
+    img_lq: Tensor,
+    intensity_min: float = 0.08,
+    intensity_max: float = 0.10, #0.12,
+) -> Tensor:
+    r"""Add multi-scale Gaussian noise to img_gt (high-quality image).
+
+    Args:
+    ----
+        img_gt (Tensor): Input image of shape (N, C, H, W), values in [0, 255].
+        intensity_min/max (float): Range to sample base intensity from.
+        scale (float or None): Optional scaling factor for intensity.
+        p (float): Probability to apply noise.
+    """
+    N, C, H, W = img_gt.shape
+
+    # Sample random intensity
+    intensity = torch.empty(1).uniform_(intensity_min, intensity_max).item()
+
+    var = intensity ** 2
+
+    # Create large scale noise
+    h_l = int(H * 1.2)
+    w_l = int(W * 1.2)
+    noise_l = torch.randn((N, 1, h_l, w_l), device=img_gt.device) * var
+    noise_l = torch.nn.functional.interpolate(noise_l, size=(H, W), mode='bicubic', align_corners=False)
+
+    # Create small scale noise
+    h_s = int(H * 0.8)
+    w_s = int(W * 0.8)
+    noise_s = torch.randn((N, 1, h_s, w_s), device=img_gt.device) * (var * 0.5)
+    noise_s = torch.nn.functional.interpolate(noise_s, size=(H, W), mode='bicubic', align_corners=False)
+
+    # Combine and add to image
+    noise = noise_l + noise_s
+    img_gt = img_gt + noise.expand(-1, C, -1, -1)  # Expand noise to all channels
+
+    img_gt = torch.clamp(img_gt, 0.0, 1.0)
+
+    return img_gt, img_lq
+
+@torch.no_grad()
+def noise(
+    img_gt: Tensor,
+    img_lq: Tensor,
+    noise_std_min: float = 0.04,
+    noise_std_max: float = 0.06, #0.08,
+) -> Tensor:
+    r"""Add tiny Gaussian noise to img_gt (high-quality image).
+
+    Args:
+    ----
+        img_gt (Tensor): Input image of shape (N, C, H, W), values in [0, 1] or [0, 255].
+        noise_std_min/max (float): Min and max standard deviation of the noise.
+            Noise is sampled between these two values per batch.
+        p (float): Probability to apply noise.
+    """
+    if img_gt.size() != img_lq.size():
+        msg = "img_gt and img_lq have to be the same resolution."
+        raise ValueError(msg)
+
+    std = torch.empty(1).uniform_(noise_std_min, noise_std_max).item()
+    noise = torch.randn_like(img_gt) * std
+    img_gt = img_gt + noise
+    img_gt = torch.clamp(img_gt, 0.0, 1.0) # Assuming images are in [0, 1]
+
+    return img_gt, img_lq
 
 @torch.no_grad()
 def mixup(
@@ -219,6 +288,8 @@ def apply_augment(
         "cutmix",
         "resizemix",
         "cutblur",
+        "noise",
+        "grain",
     ),
     prob: tuple[float, float, float, float, float] = (0.1, 0.3, 0.2, 0.7, 0.8),
     multi_prob: float = 0.3,
@@ -270,6 +341,10 @@ def apply_augment(
             img_gt, img_lq = resizemix(img_gt, img_lq)
         if "cutblur" in aug:
             img_gt, img_lq = cutblur(img_gt, img_lq)
+        if "noise" in aug:
+            img_gt, img_lq = noise(img_gt, img_lq)
+        if "grain" in aug:
+            img_gt, img_lq = grain(img_gt, img_lq)
 
     else:
         idx = random.choices(range(len(augs)), weights=prob)[0]
@@ -282,6 +357,10 @@ def apply_augment(
             img_gt, img_lq = resizemix(img_gt, img_lq)
         elif "cutblur" in aug:
             img_gt, img_lq = cutblur(img_gt, img_lq)
+        if "noise" in aug:
+            img_gt, img_lq = noise(img_gt, img_lq)
+        if "grain" in aug:
+            img_gt, img_lq = grain(img_gt, img_lq)
 
     # back to original resolution
     if scale > 1:
