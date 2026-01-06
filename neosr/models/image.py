@@ -257,6 +257,14 @@ class image(base):
         else:
             self.cri_ff = None
 
+        # gradient-weighted loss
+        if train_opt.get("gw_opt"):
+            self.cri_gw = build_loss(train_opt["gw_opt"]).to(  # type: ignore[reportCallIssue,attr-defined]
+                self.device, memory_format=torch.channels_last, non_blocking=True
+            )
+        else:
+            self.cri_gw = None
+
         # wavelet-guided loss
         self.wavelet_guided = self.opt["train"].get("wavelet_guided", False)
         self.wavelet_init = self.opt["train"].get("wavelet_init", 0)
@@ -589,6 +597,11 @@ class image(base):
                 l_g_ff = self.cri_ff(self.output, self.gt)
                 l_g_total += l_g_ff
                 loss_dict["l_g_ff"] = l_g_ff
+            # gradient-weighted loss
+            if self.cri_gw:
+                l_g_gw = self.cri_gw(self.output, self.gt)
+                l_g_total += l_g_gw
+                loss_dict["l_g_gw"] = l_g_gw
             # gan loss
             if self.cri_gan:
                 # switch to eval mode
@@ -717,6 +730,98 @@ class image(base):
         return l_g_total
 
     def optimize_parameters(self, current_iter: int) -> None:
+        # dynamic loss weight schedule
+        for loss_key, attr_name in [
+            ("pixel_opt", "cri_pix"),
+            ("mssim_opt", "cri_mssim"),
+            ("ncc_opt", "cri_ncc"),
+            ("fdl_opt", "cri_fdl"),
+            ("perceptual_opt", "cri_perceptual"),
+            ("dists_opt", "cri_dists"),
+            ("gan_opt", "cri_gan"),
+            ("ldl_opt", "cri_ldl"),
+            ("ff_opt", "cri_ff"),
+            ("gw_opt", "cri_gw"),
+            ("kl_opt", "cri_kl"),
+            ("consistency_opt", "cri_consistency"),
+            ("msswd_opt", "cri_msswd")
+        ]:
+            cfg = self.opt["train"].get(loss_key)
+            if not cfg:
+                continue
+
+            schedule = cfg.get("loss_weight_schedule")
+            if not schedule:
+                continue
+
+            # Start with the default base weight
+            weight = None #cfg['loss_weight']
+
+            # Find the applicable milestone
+            # We sort the keys to ensure we process them in chronological order
+            sorted_milestones = sorted([int(k) for k in schedule.keys()])
+            for milestone in sorted_milestones:
+                if current_iter >= milestone:
+                    weight = schedule[str(milestone)] # TOML keys are strings
+
+                else:
+                    break # Stop once we pass current_iter
+
+            if weight is None:
+                continue
+
+            if hasattr(self, attr_name):
+                loss_obj = getattr(self, attr_name)
+                if loss_obj.loss_weight != weight:
+                    loss_obj.loss_weight = weight
+
+        # --- Start of Milestone Logic ---
+        # We check for weight updates before running the closure (forward-backward)
+        for loss_key in ("pixel_opt", "mssim_opt", "ncc_opt", "fdl_opt", "perceptual_opt", "dists_opt", "gan_opt", "ldl_opt", "ff_opt", "gw_opt", "kl_opt", "consistency_opt", "msswd_opt"):
+            cfg = self.opt['train'].get(loss_key)
+
+            # Check if loss_weight is a list and milestones exist
+            if cfg and isinstance(cfg.get("loss_weight"), list) and isinstance(cfg.get("milestone"), list):
+                weights = cfg["loss_weight"]
+                milestones = cfg["milestones"]
+
+                # Find the correct weight for current_iter
+                # Example: [0.8, 0.4, 0.2] with milestones [50000, 150000]
+                idx = 0
+                for m_idx, milestone in enumerate(milestones):
+                    if current_iter >= milestone:
+                        idx = m_idx + 1
+
+                new_weight = weights[min(idx, len(weights) - 1)]
+
+                # Map the config key to the internal NeoSR loss attribute
+                loss_attr_map = {
+                    "pixel_opt": "cri_pix",
+                    "mssim_opt": "cri_mssim",
+                    "ncc_opt": "cri_ncc",
+                    "fdl_opt": "cri_fdl",
+                    "perceptual_opt": "cri_perceptual",
+                    "dists_opt": "cri_dists",
+                    "gan_opt": "cri_gan",
+                    "ldl_opt": "cri_ldl",
+                    "ff_opt": "cri_ff",
+                    "gw_opt": "cri_gw",
+                    "kl_opt": "cri_kl",
+                    "consistency_opt": "cri_consistency",
+                    "msswd_opt": "cri_msswd"
+                }
+
+                attr_name = loss_attr_map.get(loss_key)
+                if attr_name and hasattr(self, attr_name):
+                    loss_obj = getattr(self, attr_name)
+
+                    # Update the loss weight directly on the criterion object
+                    if hasattr(loss_obj, 'loss_weight'):
+                        if loss_obj.loss_weight != new_weight:
+                            loss_obj.loss_weight = new_weight
+                            # Optional: logger.info(f"Updated {loss_key} weight to {new_weight}")
+        # --- End of Milestone Logic ---
+
         # increment accumulation counter
         self.n_accumulated += 1
         # reset accumulation counter
@@ -822,7 +927,7 @@ class image(base):
         self.is_train = False
         dataset_name = dataloader.dataset.opt["name"]
         # progress bar
-        use_pbar = self.opt["eval"].get("pbar", True)
+        use_pbar = self.opt.get("eval", {}).get("pbar", True)
 
         if use_pbar:
             pbar = tqdm(
@@ -913,7 +1018,7 @@ class image(base):
         dataset_name = dataloader.dataset.opt["name"]
         dataset_type = dataloader.dataset.opt["type"]
         # progress bar
-        use_pbar = self.opt["val"].get("pbar", True)
+        use_pbar = self.opt.get("val", {}).get("pbar", True)
 
         if dataset_type == "single":
             with_metrics = False
@@ -953,7 +1058,7 @@ class image(base):
             if sf_mode:
                 self.optimizer_g.eval()
             # inference
-            tile_opt = self.opt["val"].get("tile", -1)
+            tile_opt = self.opt.get("val", {}).get("tile", -1)
             with torch.inference_mode():
                 self.output = self.tile_val() if tile_opt != -1 else model(self.lq)
             # set train mode
@@ -975,7 +1080,7 @@ class image(base):
             torch.cuda.empty_cache()
 
             # check if dataset has save_img option, and if so overwrite global save_img option
-            val_suffix = self.opt["val"].get("suffix", None)
+            val_suffix = self.opt.get("val", {}).get("suffix", None)
             v_folder = self.opt["path"]["visualization"]
             if save_img:
                 if self.opt["is_train"]:
@@ -997,7 +1102,7 @@ class image(base):
                 imwrite(sr_img, str(save_img_path))  # type: ignore[arg-type]
 
                 # add original lq and gt to results folder, once
-                if self.opt["val"].get("save_lq", False) or self.opt["val"].get("copy_lq", False):
+                if self.opt.get("val", {}).get("save_lq", False) or self.opt.get("val", {}).get("copy_lq", False):
                     save_lq_img_path = Path(v_folder) / img_name / f"{img_name}_lq.png"
 
                     if not Path.exists(save_lq_img_path):
