@@ -229,10 +229,10 @@ def parse_options(
             dataset["phase"] = phase_
             if "scale" in opt:
                 dataset["scale"] = opt["scale"]
-            if dataset.get("dataroot_gt") is not None:
-                dataset["dataroot_gt"] = str(Path(dataset["dataroot_gt"]).expanduser())
-            if dataset.get("dataroot_lq") is not None:
-                dataset["dataroot_lq"] = str(Path(dataset["dataroot_lq"]).expanduser())
+            #if dataset.get("dataroot_gt") is not None:
+            #    dataset["dataroot_gt"] = str(Path(dataset["dataroot_gt"]).expanduser())
+            #if dataset.get("dataroot_lq") is not None:
+            #    dataset["dataroot_lq"] = str(Path(dataset["dataroot_lq"]).expanduser())
 
         # paths
         if opt.get("path") is not None:
@@ -243,22 +243,21 @@ def parse_options(
                     opt["path"][key] = str(Path(val).expanduser())
 
         if is_train:
-            experiments_root = opt.get("path")
-            if experiments_root is not None:
-                experiments_root = experiments_root.get("experiments_root")
-            if experiments_root is None:
+            if opt.get("path", {}).get("experiments_root") is None:
                 experiments_root = Path(root_path) / "experiments"
-            experiments_root = Path(experiments_root) / opt["name"]
+            else:
+                experiments_root = opt["path"].get("experiments_root")
 
             if opt.get("path") is None:
                 opt["path"] = {}
 
-            opt["path"]["experiments_root"] = experiments_root
-            opt["path"]["models"] = Path(experiments_root) / "models"
-            opt["path"]["training_states"] = Path(experiments_root) / "training_states"
+            opt["path"]["experiments_root"] = Path(experiments_root) / opt["name"]
+            opt["path"]["models"] = Path(experiments_root) / opt["name"] / "models"
+            opt["path"]["training_states"] = Path(experiments_root) / opt["name"] / "training_states"
             opt["path"]["log"] = experiments_root
-            opt["path"]["visualization"] = Path(experiments_root) / "visualization"
-            opt["path"]["evaluation"] = Path(experiments_root) / "evaluation"
+            opt["path"]["visualization"] = Path(experiments_root) / opt["name"] / "visualization"
+            opt["path"]["evaluation"] = Path(experiments_root) / opt["name"] / "evaluation"
+            opt["path"]["tb_logger"] = Path(experiments_root) / "tb_logger" / opt["name"]
 
             # change some options for debug mode
             if "debug" in opt["name"]:
