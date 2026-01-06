@@ -1,3 +1,10 @@
+from os import path as osp, environ, pathsep
+
+# TODO: Make dynamic - https://github.com/the-database/traiNNer-redux/blob/bbca86e611c5a7d2339aeec045eeb9849bcc589c/traiNNer/utils/vips_setup.py
+vips_bin = r"e:\neosr-ext\.cache\vips-dev-8.16\bin"
+if str(vips_bin) not in environ["PATH"]:
+    environ["PATH"] = pathsep.join((vips_bin, environ["PATH"]))
+
 import datetime
 import logging
 import math
@@ -39,7 +46,7 @@ if sys.version_info.major != 3 or sys.version_info.minor != 12:
     raise ValueError(msg)
 
 
-def init_tb_loggers(opt: dict[str, Any]):
+def init_tb_loggers(opt: dict[str, Any], resume:bool = False):
     # initialize wandb logger before tensorboard logger to allow proper sync
     if (
         (opt["logger"].get("wandb") is not None)
@@ -52,8 +59,15 @@ def init_tb_loggers(opt: dict[str, Any]):
         init_wandb_logger(opt)
     tb_logger = None
     if opt["logger"].get("use_tb_logger") and "debug" not in opt["name"]:
+        # If we're not resuming training, rename the old log folder and create a new one.
+        if not resume:
+            print("___RENAME DIZ SHIT___")
+            mkdir_and_rename(
+                opt["path"]["tb_logger"]
+            )
+
         tb_logger = init_tb_logger(
-            log_dir=Path(opt["root_path"]) / "experiments" / "tb_logger" / opt["name"]
+            log_dir=opt["path"]["tb_logger"]
         )
     return tb_logger
 
@@ -93,16 +107,20 @@ def create_train_val_dataloader(
             total_iters = int(opt["logger"].get("total_iter", 1000000) * accumulate)
             total_epochs: int = math.ceil(total_iters / num_iter_per_epoch)
             logger.info(
-                "Training informations:"
+                "Training information:"
                 f"\n-------- Starting model: {opt['name']}"
                 f"\n-------- GPUs detected: {opt['world_size']}"
                 f"\n-------- Patch size: {dataset_opt['patch_size']}"
                 f"\n-------- Dataset size: {len(train_set)}"  # type: ignore[reportArgumentType]
+                f"\n-------- Dataset agumentations: {opt['datasets']['train'].get('augmentation', None)}"
                 f"\n-------- Batch size per gpu: {dataset_opt['batch_size']}"
                 f"\n-------- Accumulated batches: {dataset_opt['batch_size'] * accumulate}"
                 f"\n-------- Required iters per epoch: {num_iter_per_epoch}"
                 f"\n-------- Total epochs {total_epochs} for total iters {total_iters // accumulate}."
             )
+
+            #self.aug = self.opt["datasets"]["train"].get("augmentation", None)
+            #self.aug_prob = self.opt["datasets"]["train"].get("aug_prob", None)
         elif phase.split("_")[0] == "val":
             val_set = build_dataset(dataset_opt)
             val_loader = build_dataloader(
@@ -138,7 +156,7 @@ def create_train_val_dataloader(
 def load_resume_state(opt: dict[str, Any]):
     resume_state_path = None
     if opt["auto_resume"]:
-        state_path = Path("experiments") / opt["name"] / "training_states"
+        state_path = opt["path"]["training_states"]
         if Path.is_dir(state_path):
             states = list(
                 scandir(state_path, suffix="state", recursive=False, full_path=False)
@@ -209,14 +227,6 @@ def train_pipeline(root_path: str) -> None:
     # mkdir for experiments and logger
     if resume_state is None:
         make_exp_dirs(opt)
-        if (
-            opt["logger"].get("use_tb_logger")
-            and "debug" not in opt["name"]
-            and opt["rank"] == 0
-        ):
-            mkdir_and_rename(
-                Path(opt["root_path"]) / "experiments" / "tb_logger" / opt["name"]
-            )
 
     # copy the toml file to the experiment root
     try:
@@ -244,7 +254,7 @@ def train_pipeline(root_path: str) -> None:
     )
 
     # initialize wandb and tb loggers
-    tb_logger = init_tb_loggers(opt)
+    tb_logger = init_tb_loggers(opt, False if resume_state is None else True)
 
     # create train and validation dataloaders
     result = create_train_val_dataloader(opt, logger)
