@@ -32,6 +32,8 @@ def build_loss(opt: dict[str, Any]) -> nn.Module | object:
 
     """
     opt = deepcopy(opt)
+    opt.pop("loss_weight_schedule", None) # Remove loss_weight_schedule, this is only used during runtime, not when building the loss.
+
     loss_type = opt.pop("type")
     loss = LOSS_REGISTRY.get(loss_type)(**opt)  # type: ignore[operator]
     logger = get_root_logger()
