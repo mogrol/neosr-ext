@@ -13,8 +13,8 @@ upscale, __ = net_opt()
 class Conv3XC(nn.Module):
     def __init__(
         self, c_in: int, c_out: int, gain: int = 1, s: int = 1, bias: bool = True
-    ):
-        super(Conv3XC, self).__init__()
+    ) -> None:
+        super().__init__()
         self.weight_concat = None
         self.bias_concat = None
         self.update_params_flag = False
@@ -66,10 +66,16 @@ class Conv3XC(nn.Module):
 
         if self.training is False:
             self.eval_conv.weight.requires_grad = False
-            self.eval_conv.bias.requires_grad = False
+            self.eval_conv.bias.requires_grad = False  # type: ignore
             self.update_params()
 
-    def update_params(self):
+    def update_params(self) -> None:
+        assert isinstance(self.conv[0].weight, Tensor)
+        assert isinstance(self.conv[0].bias, Tensor)
+        assert isinstance(self.conv[1].weight, Tensor)
+        assert isinstance(self.conv[1].bias, Tensor)
+        assert isinstance(self.conv[2].weight, Tensor)
+        assert isinstance(self.conv[2].bias, Tensor)
         w1 = self.conv[0].weight.data.clone().detach()
         b1 = self.conv[0].bias.data.clone().detach()
         w2 = self.conv[1].weight.data.clone().detach()
@@ -92,11 +98,11 @@ class Conv3XC(nn.Module):
         self.bias_concat = (w3 * b.reshape(1, -1, 1, 1)).sum((1, 2, 3)) + b3
 
         sk_w = self.sk.weight.data.clone().detach()
-        sk_b = self.sk.bias.data.clone().detach()
+        sk_b = self.sk.bias.data.clone().detach()  # type: ignore
         target_kernel_size = 3
 
-        H_pixels_to_pad = (target_kernel_size - 1) // 2
-        W_pixels_to_pad = (target_kernel_size - 1) // 2
+        H_pixels_to_pad = (target_kernel_size - 1) // 2  # noqa: N806
+        W_pixels_to_pad = (target_kernel_size - 1) // 2  # noqa: N806
         sk_w = F.pad(
             sk_w, [H_pixels_to_pad, H_pixels_to_pad, W_pixels_to_pad, W_pixels_to_pad]
         )
@@ -105,9 +111,9 @@ class Conv3XC(nn.Module):
         self.bias_concat = self.bias_concat + sk_b
 
         self.eval_conv.weight.data = self.weight_concat
-        self.eval_conv.bias.data = self.bias_concat
+        self.eval_conv.bias.data = self.bias_concat  # type: ignore
 
-    def forward(self, x):
+    def forward(self, x):  # noqa: ANN201, ANN001
         if self.training:
             x_pad = F.pad(x, (1, 1, 1, 1), "constant", 0)
             out = self.conv(x_pad) + self.sk(x)
@@ -119,8 +125,8 @@ class Conv3XC(nn.Module):
 
 
 class SPAB(nn.Module):
-    def __init__(self, in_channels: int, end: bool = False):
-        super(SPAB, self).__init__()
+    def __init__(self, in_channels: int, end: bool = False) -> None:
+        super().__init__()
 
         self.in_channels = in_channels
         self.c1_r = Conv3XC(in_channels, in_channels, gain=2, s=1)
@@ -130,7 +136,7 @@ class SPAB(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.end = end
 
-    def forward(self, x):
+    def forward(self, x):  # noqa: ANN201, ANN001
         out1 = self.c1_r(x)
         out1_act = self.act1(out1)
 
@@ -147,8 +153,10 @@ class SPAB(nn.Module):
 
 
 class SPABS(nn.Module):
-    def __init__(self, feature_channels: int, n_blocks: int = 4, drop: float = 0.0):
-        super(SPABS, self).__init__()
+    def __init__(
+        self, feature_channels: int, n_blocks: int = 4, drop: float = 0.0
+    ) -> None:
+        super().__init__()
         self.block_1 = SPAB(feature_channels)
 
         self.block_n = nn.Sequential(*[SPAB(feature_channels) for _ in range(n_blocks)])
@@ -161,7 +169,7 @@ class SPABS(nn.Module):
         if self.training:
             trunc_normal_(self.conv_cat.weight, std=0.02)
 
-    def forward(self, x):
+    def forward(self, x):  # noqa: ANN201, ANN001
         out_b1 = self.block_1(x)
         out_x = self.block_n(out_b1)
         out_end, out_x_2 = self.block_end(out_x)
@@ -169,28 +177,28 @@ class SPABS(nn.Module):
         return self.conv_cat(torch.cat([x, out_end, out_b1, out_x_2], 1))
 
 
-@ARCH_REGISTRY.register()
-class spanplus(nn.Module):
-    """Modified from 'Swift Parameter-free Attention Network for Efficient Super-Resolution':
-    https://arxiv.org/abs/2311.12770
+class SpanPlus(nn.Module):
+    """
+    Swift Parameter-free Attention Network for Efficient Super-Resolution
     """
 
     def __init__(
         self,
         num_in_ch: int = 3,
         num_out_ch: int = 3,
-        blocks: list = [4],
+        blocks: Sequence[int] | None = None,
         feature_channels: int = 48,
-        upscale: int = upscale,
+        upscale: int = 4,
         drop_rate: float = 0.0,
         upsampler: str = "dys",  # "lp", "ps", "conv"- only 1x
-    ):
-        super(spanplus, self).__init__()
+    ) -> None:
+        if blocks is None:
+            blocks = [4]
+        super().__init__()
 
         in_channels = num_in_ch
         out_channels = num_out_ch if upsampler == "dys" else num_in_ch
-        if not isinstance(blocks, list):
-            blocks = [int(blocks)]
+
         if not self.training:
             drop_rate = 0
         self.feats = nn.Sequential(
@@ -216,21 +224,90 @@ class spanplus(nn.Module):
                 ["ps", "dys", "conv"] conv supports only 1x'
             )
 
-    def forward(self, x):
+    def forward(self, x):  # noqa: ANN201, ANN001
         out = self.feats(x)
         return self.upsampler(out)
 
 
 @ARCH_REGISTRY.register()
-def spanplus_sts(**kwargs):
-    return spanplus(blocks=[2], feature_channels=32, upsampler="ps", **kwargs)
+def spanplus(
+    scale: int = upscale,
+    num_in_ch: int = 3,
+    num_out_ch: int = 3,
+    blocks: Sequence[int] | None = None,
+    feature_channels: int = 48,
+    drop_rate: float = 0.0,
+    upsampler: upsampler_type = "dys",  # "lp", "ps", "conv"- only 1x
+) -> SpanPlus:
+    return SpanPlus(
+        num_in_ch=num_in_ch,
+        num_out_ch=num_out_ch,
+        blocks=blocks,
+        feature_channels=feature_channels,
+        upscale=scale,
+        drop_rate=drop_rate,
+        upsampler=upsampler,
+    )
 
 
 @ARCH_REGISTRY.register()
-def spanplus_s(**kwargs):
-    return spanplus(blocks=[2], feature_channels=32, **kwargs)
+def spanplus_sts(
+    scale: int = upscale,
+    num_in_ch: int = 3,
+    num_out_ch: int = 3,
+    blocks: Sequence[int] | None = (2,),
+    feature_channels: int = 32,
+    drop_rate: float = 0.0,
+    upsampler: upsampler_type = "ps",  # "lp", "ps", "conv"- only 1x
+) -> SpanPlus:
+    return SpanPlus(
+        num_in_ch=num_in_ch,
+        num_out_ch=num_out_ch,
+        blocks=blocks,
+        feature_channels=feature_channels,
+        upscale=scale,
+        drop_rate=drop_rate,
+        upsampler=upsampler,
+    )
 
 
 @ARCH_REGISTRY.register()
-def spanplus_st(**kwargs):
-    return spanplus(upsampler="ps", **kwargs)
+def spanplus_s(
+    scale: int = upscale,
+    num_in_ch: int = 3,
+    num_out_ch: int = 3,
+    blocks: Sequence[int] | None = (2,),
+    feature_channels: int = 32,
+    drop_rate: float = 0.0,
+    upsampler: upsampler_type = "dys",  # "lp", "ps", "conv"- only 1x
+) -> SpanPlus:
+    return SpanPlus(
+        num_in_ch=num_in_ch,
+        num_out_ch=num_out_ch,
+        blocks=blocks,
+        feature_channels=feature_channels,
+        upscale=scale,
+        drop_rate=drop_rate,
+        upsampler=upsampler,
+    )
+
+
+@ARCH_REGISTRY.register()
+def spanplus_st(
+    scale: int = upscale,
+    num_in_ch: int = 3,
+    num_out_ch: int = 3,
+    blocks: Sequence[int] | None = None,
+    feature_channels: int = 48,
+    drop_rate: float = 0.0,
+    upsampler: upsampler_type = "ps",  # "lp", "ps", "conv"- only 1x
+) -> SpanPlus:
+    return SpanPlus(
+        num_in_ch=num_in_ch,
+        num_out_ch=num_out_ch,
+        blocks=blocks,
+        feature_channels=feature_channels,
+        upscale=scale,
+        drop_rate=drop_rate,
+        upsampler=upsampler,
+    )
